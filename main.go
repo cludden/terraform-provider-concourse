@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/cathive/terraform-provider-concourse/concourse"
+	"github.com/cludden/terraform-provider-concourse/concourse"
 	"github.com/hashicorp/terraform/plugin"
 	"github.com/hashicorp/terraform/terraform"
 )

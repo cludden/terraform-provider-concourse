@@ -2,26 +2,27 @@ package concourse
 
 import (
 	"fmt"
-	"github.com/hashicorp/terraform/helper/schema"
-	"github.com/hashicorp/terraform/terraform"
-	"golang.org/x/oauth2"
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/hashicorp/terraform/helper/schema"
+	"github.com/hashicorp/terraform/terraform"
+	"golang.org/x/oauth2"
 )
 
 // SkyUserInfo encapsulates all the information that is being reported by the Sky marshal
 // "sky/userinfo" REST endpoint
 type SkyUserInfo struct {
-	CSRF     string   `json:"csrf"`
-	Email    string   `json:"email"`
-	Exp      int      `json:"exp"`
-	IsAdmin  bool     `json:"is_admin"`
-	Name     string   `json:"name"`
-	Sub      string   `json:"sub"`
-	Teams    []string `json:"teams"`
-	UserID   string   `json:"user_id"`
-	UserName string   `json:"user_name"`
+	CSRF     string              `json:"csrf"`
+	Email    string              `json:"email"`
+	Exp      int                 `json:"exp"`
+	IsAdmin  bool                `json:"is_admin"`
+	Name     string              `json:"name"`
+	Sub      string              `json:"sub"`
+	Teams    map[string][]string `json:"teams"`
+	UserID   string              `json:"user_id"`
+	UserName string              `json:"user_name"`
 }
 
 // Provider creates a new Concourse terraform provider instance.

@@ -3,9 +3,10 @@ package concourse
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/concourse/go-concourse/concourse"
 	"net/http"
 	"net/url"
+
+	"github.com/concourse/concourse/go-concourse/concourse"
 )
 
 // Config provides access to all the stuff that is necessary to properly operate

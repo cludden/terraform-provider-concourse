@@ -2,8 +2,9 @@ package concourse
 
 import (
 	"fmt"
-	"github.com/concourse/atc"
-	"github.com/concourse/go-concourse/concourse"
+
+	"github.com/concourse/concourse/atc"
+	"github.com/concourse/concourse/go-concourse/concourse"
 	"github.com/hashicorp/terraform/helper/schema"
 )
 
@@ -43,14 +44,14 @@ func resourceTeamCreate(d *schema.ResourceData, m interface{}) error {
 		group = append(groups, group.(string))
 	}
 
-	team := atc.Team{
+	t := atc.Team{
 		Name: name,
-		Auth: map[string][]string{
-			"users":  users,
-			"groups": groups,
+		Auth: map[string]map[string][]string{
+			"users":  map[string][]string{},
+			"groups": map[string][]string{},
 		},
 	}
-	team, created, updated, err := concourse.Team(name).CreateOrUpdate(team)
+	team, created, updated, err := concourse.Team(name).CreateOrUpdate(t)
 	if err != nil {
 		return fmt.Errorf("could not create team: %v", err)
 	}
