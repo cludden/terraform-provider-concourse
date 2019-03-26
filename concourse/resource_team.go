@@ -41,14 +41,16 @@ func resourceTeamCreate(d *schema.ResourceData, m interface{}) error {
 	}
 
 	for _, group := range authGroups {
-		group = append(groups, group.(string))
+		groups = append(groups, group.(string))
 	}
 
 	t := atc.Team{
 		Name: name,
 		Auth: map[string]map[string][]string{
-			"users":  map[string][]string{},
-			"groups": map[string][]string{},
+			"member": map[string][]string{
+				"users":  users,
+				"groups": groups,
+			},
 		},
 	}
 	team, created, updated, err := concourse.Team(name).CreateOrUpdate(t)
@@ -96,6 +98,7 @@ func resourceTeamRead(d *schema.ResourceData, m interface{}) error {
 
 func resourceTeamUpdate(d *schema.ResourceData, m interface{}) error {
 	concourse := m.(Config).Concourse()
+
 	newName := ""
 	if d.HasChange("name") {
 		newName = d.Get("name").(string)
@@ -105,10 +108,14 @@ func resourceTeamUpdate(d *schema.ResourceData, m interface{}) error {
 	if err != nil {
 		return fmt.Errorf("unable to list teams: %v", err)
 	}
+
+	var t *atc.Team
 	for _, team := range teams {
 		if id == teamIDAsString(team.ID) {
+			t = &team
 			oldName := team.Name
 			if newName != "" && oldName != newName {
+				t.Name = newName
 				_, err := concourse.Team(team.Name).RenameTeam(team.Name, newName)
 				if err != nil {
 					return err
@@ -117,8 +124,41 @@ func resourceTeamUpdate(d *schema.ResourceData, m interface{}) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("team with ID %s not found", d.Id())
 
+	if t == nil {
+		return fmt.Errorf("team with ID %s not found", d.Id())
+	}
+
+	if d.HasChange("auth_users") || d.HasChange("auth_groups") {
+		authUsers := d.Get("auth_users").([]interface{})
+		authGroups := d.Get("auth_groups").([]interface{})
+		var users, groups []string
+
+		for _, user := range authUsers {
+			users = append(users, user.(string))
+		}
+
+		for _, group := range authGroups {
+			groups = append(groups, group.(string))
+		}
+
+		t.Auth = map[string]map[string][]string{
+			"member": map[string][]string{
+				"users":  users,
+				"groups": groups,
+			},
+		}
+
+		_, created, updated, err := concourse.Team(t.Name).CreateOrUpdate(*t)
+		if err != nil {
+			return fmt.Errorf("could not create team: %v", err)
+		}
+		if !created && !updated {
+			return fmt.Errorf("could not create/update team %s: neither 'created' nor 'updated' was set to true", t.Name)
+		}
+	}
+
+	return nil
 }
 
 func resourceTeamDelete(d *schema.ResourceData, m interface{}) error {
