@@ -30,10 +30,9 @@ func Provider() terraform.ResourceProvider {
 	return &schema.Provider{
 		Schema: map[string]*schema.Schema{
 			"concourse_url": {
-				Description:   "Concourse URL to authenticate with",
-				Type:          schema.TypeString,
-				Optional:      true,
-				ConflictsWith: []string{"target"},
+				Description: "Concourse URL to authenticate with",
+				Type:        schema.TypeString,
+				Optional:    true,
 			},
 			"insecure": {
 				Description:   "Skip verification of the endpoint's SSL certificate",
@@ -61,6 +60,21 @@ func Provider() terraform.ResourceProvider {
 				Optional:      true,
 				ConflictsWith: []string{"concourse_url", "insecure", "auth_token_type", "auth_token_value"},
 			},
+			"username": {
+				Description: "Concourse Local Username",
+				Type:        schema.TypeString,
+				Optional:    true,
+			},
+			"password": {
+				Description: "Concourse Local Username",
+				Type:        schema.TypeString,
+				Optional:    true,
+			},
+			"team": {
+				Description: "Concourse team to authenticate with",
+				Type:        schema.TypeString,
+				Optional:    true,
+			},
 		},
 		ResourcesMap: map[string]*schema.Resource{
 			"concourse_team":     resourceTeam(),
@@ -81,12 +95,38 @@ func configure(d *schema.ResourceData) (interface{}, error) {
 	authTokenType := d.Get("auth_token_type").(string)
 	authTokenValue := d.Get("auth_token_value").(string)
 	targetName := d.Get("target").(string)
+	username := d.Get("username").(string)
+	password := d.Get("password").(string)
+	team := d.Get("team").(string)
 
 	var u *url.URL
 
 	// Let's try to read the fly CLI configuration file if the user did not specify
 	// any connection parameters in the provider configuration.
-	if targetName != "" {
+	if username != "" && password != "" {
+		userPassLogin := UserPassLogin{
+			Username: username,
+			Password: password,
+			URL:      concourseURL,
+			Team:     team,
+			Target:   targetName,
+		}
+		curl, err := url.Parse(concourseURL)
+		if err != nil {
+			return nil, fmt.Errorf("unable to parse URL (%s): %v", concourseURL, err)
+		}
+		u = &url.URL{
+			Scheme: curl.Scheme,
+			Host:   curl.Host,
+			Path:   curl.Path,
+		}
+		token, err := userPassLogin.FetchToken()
+		if err != nil {
+			return nil, fmt.Errorf("error authenticating via password grant: %v", err)
+		}
+		authTokenType = token.TokenType
+		authTokenValue = token.AccessToken
+	} else if targetName != "" {
 		cfg := FlyRc{}
 		err := cfg.ImportConfig()
 		if err != nil {
@@ -124,17 +164,15 @@ func configure(d *schema.ResourceData) (interface{}, error) {
 		if len(cfgMissing) > 0 {
 			return nil, fmt.Errorf("required configuration parameter(s) missing: %s", strings.Join(cfgMissing, ", "))
 		}
-		u, err := url.Parse(concourseURL)
+		curl, err := url.Parse(concourseURL)
 		if err != nil {
 			return nil, fmt.Errorf("unable to parse URL (%s): %v", concourseURL, err)
 		}
-
 		u = &url.URL{
-			Scheme: u.Scheme,
-			Host:   u.Host,
-			Path:   u.Path,
+			Scheme: curl.Scheme,
+			Host:   curl.Host,
+			Path:   curl.Path,
 		}
-
 	}
 	oAuthToken := &oauth2.Token{
 		TokenType:   authTokenType,
@@ -148,4 +186,25 @@ func configure(d *schema.ResourceData) (interface{}, error) {
 	}
 
 	return NewConfig(u, httpClient, insecure, targetName)
+}
+
+// UserPassLogin manages state for a password grant session
+type UserPassLogin struct {
+	Username string
+	Password string
+	URL      string
+	Team     string
+	Target   string
+}
+
+// FetchToken retrieves a password grant oath token
+func (u *UserPassLogin) FetchToken() (*oauth2.Token, error) {
+	oauth2Config := oauth2.Config{
+		ClientID:     "fly",
+		ClientSecret: "Zmx5",
+		Endpoint:     oauth2.Endpoint{TokenURL: fmt.Sprintf("%s/sky/token", u.URL)},
+		Scopes:       []string{"openid", "profile", "email", "federated:id", "groups"},
+	}
+
+	return oauth2Config.PasswordCredentialsToken(oauth2.NoContext, u.Username, u.Password)
 }
