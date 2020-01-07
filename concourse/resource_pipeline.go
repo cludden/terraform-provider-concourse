@@ -1,9 +1,14 @@
 package concourse
 
 import (
+	"bytes"
 	"fmt"
-	"github.com/hashicorp/terraform/helper/schema"
 	"strconv"
+	"strings"
+
+	"github.com/concourse/concourse/atc"
+	"github.com/hashicorp/terraform/helper/schema"
+	yaml "gopkg.in/yaml.v2"
 )
 
 // pipelineIDAsString converts a given numeric team ID, which is required, because Terraform resource data IDs must be
@@ -25,32 +30,30 @@ func resourcePipelineCreate(d *schema.ResourceData, m interface{}) error {
 	// We check, if the pipeline already exists...
 	pipeline, exists, err := concourse.Pipeline(name)
 	if err != nil {
-		return fmt.Errorf("could not fetch details of  pipeline \"%s\" prior to creation: %v", name, err)
+		return fmt.Errorf("could not fetch details of pipeline \"%s\" prior to creation: %v", name, err)
 	}
 	if exists {
 		return fmt.Errorf("pipeline \"%s\" does already exist in team \"%s\"", name, team)
 	}
 
-	_, _, _, err = concourse.CreateOrUpdatePipelineConfig(name, "1", []byte(config), false) // todo: see issue #3
+	created, updated, _, err := concourse.CreateOrUpdatePipelineConfig(name, "1", []byte(config), false) // todo: see issue #3
 	if err != nil {
 		return fmt.Errorf("could not create pipeline config: %v", err)
 	}
 
 	// Now we check, if the pipeline has been created...
 	pipeline, exists, err = concourse.Pipeline(name)
-	if err != nil {
-		return fmt.Errorf("could not fetch details of  pipeline \"%s\" after it's creation: %v", name, err)
-	}
-	if !exists {
+	if !created && !updated {
 		return fmt.Errorf("pipeline \"%s\" does not exist in team \"%s\" after an attempt to create it", name, team)
 	}
 
 	// We check if the configuration has been created.
-	_, newConfig, configVersion, _, err := concourse.PipelineConfig(name)
-	if err != nil {
+	_, configVersion, found, err := concourse.PipelineConfig(name)
+	if err != nil || found != true {
 		return fmt.Errorf("unable to read pipeline config for pipeline \"%s\" in team \"%s\" after attempting to create it: %v", name, team, err)
 	}
-	d.Set("config", string(newConfig))
+
+	d.Set("config", config)
 	d.Set("config_version", configVersion)
 
 	d.SetId(pipelineIDAsString(pipeline.ID))
@@ -108,19 +111,32 @@ func resourcePipelineRead(d *schema.ResourceData, m interface{}) error {
 			d.Set("team", pipeline.TeamName)
 			d.Set("paused", pipeline.Paused)
 			d.Set("public", pipeline.Public)
+			lastConfigStr := d.Get("config").(string)
 
-			_, config, version, _, err := concourse.PipelineConfig(pipeline.Name)
+			var lastConfig atc.Config
+			if err := atc.UnmarshalConfig([]byte(lastConfigStr), &lastConfig); err != nil {
+				return fmt.Errorf("error parsing last known config: %v", err)
+			}
+
+			currentConfig, version, _, err := concourse.PipelineConfig(pipeline.Name)
 			if err != nil {
 				return fmt.Errorf("unable to read configuration of pipeline \"%s\": %v", pipeline.Name, err)
 			}
-			d.Set("config", config.String())
-			d.Set("config_version", version)
+
+			if lastConfig.Diff(&bytes.Buffer{}, currentConfig) {
+				configBytes, err := yaml.Marshal(currentConfig)
+				if err != nil {
+					return fmt.Errorf("unable to marshal config: %v", err)
+				}
+				d.Set("config", string(configBytes))
+				d.Set("config_version", version)
+			}
 
 			return nil
 		}
 	}
 
-	// If a team with the given ID/name cannot be found, it has probably been already been deleted.
+	// If a pipeline with the given ID/name cannot be found, it has probably been already been deleted.
 	// We will have to update the state then...
 	d.SetId("")
 	return nil
@@ -177,23 +193,38 @@ func resourcePipelineUpdate(d *schema.ResourceData, m interface{}) error {
 
 	if d.HasChange("config") {
 		config := d.Get("config").(string)
-		_, curConfig, curConfigVersionStr, _, err := concourse.PipelineConfig(name)
+		var newConfig atc.Config
+		if err := atc.UnmarshalConfig([]byte(config), &newConfig); err != nil {
+			return fmt.Errorf("unable to parse existing config: %v", err)
+		}
+
+		existingConfig, existingConfigVersion, found, err := concourse.PipelineConfig(name)
 		if err != nil {
 			return fmt.Errorf("unable to fetch configuration of pipeline \"%s\" of team \"%s\": %v", name, team, err)
+		} else if found != true {
+			return fmt.Errorf("no pipeline \"%s\" of team \"%s\" found", name, team)
 		}
-		curConfigVersion, err := strconv.Atoi(curConfigVersionStr)
+
+		version, err := strconv.Atoi(existingConfigVersion)
 		if err != nil {
-			return fmt.Errorf("unable to convert pipeline configuration version \"%s\" to number: %v", curConfigVersionStr, err)
+			return fmt.Errorf("unable to parse current config version: %v", err)
 		}
-		if string(curConfig) != config {
-			_, _, _, err = concourse.CreateOrUpdatePipelineConfig(name, strconv.Itoa(curConfigVersion+1), []byte(config), false) // todo: see issue #3
-			if err != nil {
-				return fmt.Errorf("unable to update configuration of pipeline \"%s\" of team \"%s\" (current version: %d): %v", name, team, curConfigVersion, err)
+
+		b := &bytes.Buffer{}
+		if existingConfig.Diff(b, newConfig) {
+			created, updated, warnings, err := concourse.CreateOrUpdatePipelineConfig(name, existingConfigVersion, []byte(config), false) // todo: see issue #3
+			if err != nil || (!created && !updated) {
+				warningsStr := make([]string, len(warnings))
+				for _, w := range warnings {
+					warningsStr = append(warningsStr, fmt.Sprintf("[%s] %s", w.Type, w.Message))
+				}
+				return fmt.Errorf("unable to update configuration of pipeline \"%s\" of team \"%s\" (current version: %d): %v, %s", name, team, version, err, strings.Join(warningsStr, ", "))
 			}
+			d.Set("config_version", version+1)
 		}
 	}
 
-	return nil
+	return resourcePipelineRead(d, m)
 }
 
 func resourcePipelineDelete(d *schema.ResourceData, m interface{}) error {
