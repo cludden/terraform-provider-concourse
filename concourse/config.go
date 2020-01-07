@@ -3,6 +3,7 @@ package concourse
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 
@@ -26,6 +27,7 @@ type config struct {
 	userInfo      *SkyUserInfo
 	version       string
 	workerVersion string
+	log           *log.Logger
 }
 
 func (c *config) Concourse() concourse.Client {

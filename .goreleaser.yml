@@ -4,6 +4,7 @@ before:
   hooks:
     # you may remove this if you don't use vgo
     - go mod tidy
+
 builds:
   - main: main.go
     env:
@@ -15,16 +16,25 @@ builds:
       - darwin
       - linux
       - windows
+
 archives:
   - files:
       - none*
+
 checksum:
   name_template: "checksums.txt"
+
 snapshot:
   name_template: "{{ .Tag }}-next"
+
 changelog:
   sort: asc
   filters:
     exclude:
       - "^docs:"
       - "^test:"
+
+release:
+  github:
+    owner: cludden
+    name: terraform-provider-concourse

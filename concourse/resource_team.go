@@ -61,7 +61,7 @@ func resourceTeamCreate(d *schema.ResourceData, m interface{}) error {
 		return fmt.Errorf("could not create/update team %s: neither 'created' nor 'updated' was set to true", name)
 	}
 	d.SetId(teamIDAsString(team.ID))
-	return nil
+	return resourceTeamRead(d, m)
 }
 
 func resourceTeamRead(d *schema.ResourceData, m interface{}) error {
@@ -85,6 +85,33 @@ func resourceTeamRead(d *schema.ResourceData, m interface{}) error {
 			if err := d.Set("name", team.Name); err != nil {
 				return err
 			}
+
+			for role, auth := range team.Auth {
+				if role == "member" {
+					users, ok := auth["users"]
+					if ok {
+						authUsers := make([]interface{}, len(users))
+						for i, user := range users {
+							authUsers[i] = user
+						}
+						d.Set("auth_users", authUsers)
+					} else {
+						d.Set("auth_users", []interface{}{})
+					}
+
+					groups, ok := auth["groups"]
+					if ok {
+						authGroups := make([]interface{}, len(groups))
+						for i, group := range groups {
+							authGroups[i] = group
+						}
+						d.Set("auth_groups", authGroups)
+					} else {
+						d.Set("auth_groups", []interface{}{})
+					}
+				}
+			}
+
 			return nil
 		}
 	}
@@ -158,7 +185,7 @@ func resourceTeamUpdate(d *schema.ResourceData, m interface{}) error {
 		}
 	}
 
-	return nil
+	return resourceTeamRead(d, m)
 }
 
 func resourceTeamDelete(d *schema.ResourceData, m interface{}) error {

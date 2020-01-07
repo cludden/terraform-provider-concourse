@@ -85,107 +85,109 @@ func Provider() terraform.ResourceProvider {
 			"concourse_server_info":     dataServerInfo(),
 			"concourse_team":            dataTeam(),
 		},
-		ConfigureFunc: configure,
+		ConfigureFunc: configure(),
 	}
 }
 
-func configure(d *schema.ResourceData) (interface{}, error) {
-	concourseURL := d.Get("concourse_url").(string)
-	insecure := d.Get("insecure").(bool)
-	authTokenType := d.Get("auth_token_type").(string)
-	authTokenValue := d.Get("auth_token_value").(string)
-	targetName := d.Get("target").(string)
-	username := d.Get("username").(string)
-	password := d.Get("password").(string)
-	team := d.Get("team").(string)
+func configure() func(d *schema.ResourceData) (interface{}, error) {
+	return func(d *schema.ResourceData) (interface{}, error) {
+		concourseURL := d.Get("concourse_url").(string)
+		insecure := d.Get("insecure").(bool)
+		authTokenType := d.Get("auth_token_type").(string)
+		authTokenValue := d.Get("auth_token_value").(string)
+		targetName := d.Get("target").(string)
+		username := d.Get("username").(string)
+		password := d.Get("password").(string)
+		team := d.Get("team").(string)
 
-	var u *url.URL
+		var u *url.URL
 
-	// Let's try to read the fly CLI configuration file if the user did not specify
-	// any connection parameters in the provider configuration.
-	if username != "" && password != "" {
-		userPassLogin := UserPassLogin{
-			Username: username,
-			Password: password,
-			URL:      concourseURL,
-			Team:     team,
-			Target:   targetName,
+		// Let's try to read the fly CLI configuration file if the user did not specify
+		// any connection parameters in the provider configuration.
+		if username != "" && password != "" {
+			userPassLogin := UserPassLogin{
+				Username: username,
+				Password: password,
+				URL:      concourseURL,
+				Team:     team,
+				Target:   targetName,
+			}
+			curl, err := url.Parse(concourseURL)
+			if err != nil {
+				return nil, fmt.Errorf("unable to parse URL (%s): %v", concourseURL, err)
+			}
+			u = &url.URL{
+				Scheme: curl.Scheme,
+				Host:   curl.Host,
+				Path:   curl.Path,
+			}
+			token, err := userPassLogin.FetchToken()
+			if err != nil {
+				return nil, fmt.Errorf("error authenticating via password grant: %v", err)
+			}
+			authTokenType = token.TokenType
+			authTokenValue = token.AccessToken
+		} else if targetName != "" {
+			cfg := FlyRc{}
+			err := cfg.ImportConfig()
+			if err != nil {
+				return nil, fmt.Errorf("unable to parse Fly configuration file (%s): %v", cfg.Filename, err)
+			}
+
+			if len(cfg.Targets) <= 0 {
+				return nil, fmt.Errorf("no targets found in Fly configuration file (%s)", cfg.Filename)
+			}
+			if targetName == "" {
+				return nil, fmt.Errorf("provider argument \"target\" must be specified")
+			}
+			target, exists := cfg.Targets[targetName]
+			if !exists {
+				return nil, fmt.Errorf("unable to find targetName with ID \"%s\" in Fly configuration file %s", targetName, cfg.Filename)
+			}
+			concourseURL = target.API
+			if u, err = url.Parse(concourseURL); err != nil {
+				return nil, fmt.Errorf("unable to parse URL (%s): %v", concourseURL, err)
+			}
+			insecure = target.Insecure
+			authTokenType = target.Token.Type
+			authTokenValue = target.Token.Value
+		} else {
+			cfgMissing := make([]string, 0)
+			if concourseURL == "" {
+				cfgMissing = append(cfgMissing, "\"concourse_url\"")
+			}
+			if authTokenType == "" {
+				cfgMissing = append(cfgMissing, "\"auth_token_type\"")
+			}
+			if authTokenValue == "" {
+				cfgMissing = append(cfgMissing, "\"auth_token_value\"")
+			}
+			if len(cfgMissing) > 0 {
+				return nil, fmt.Errorf("required configuration parameter(s) missing: %s", strings.Join(cfgMissing, ", "))
+			}
+			curl, err := url.Parse(concourseURL)
+			if err != nil {
+				return nil, fmt.Errorf("unable to parse URL (%s): %v", concourseURL, err)
+			}
+			u = &url.URL{
+				Scheme: curl.Scheme,
+				Host:   curl.Host,
+				Path:   curl.Path,
+			}
 		}
-		curl, err := url.Parse(concourseURL)
-		if err != nil {
-			return nil, fmt.Errorf("unable to parse URL (%s): %v", concourseURL, err)
+		oAuthToken := &oauth2.Token{
+			TokenType:   authTokenType,
+			AccessToken: authTokenValue,
 		}
-		u = &url.URL{
-			Scheme: curl.Scheme,
-			Host:   curl.Host,
-			Path:   curl.Path,
+		transport := &oauth2.Transport{
+			Source: oauth2.StaticTokenSource(oAuthToken),
 		}
-		token, err := userPassLogin.FetchToken()
-		if err != nil {
-			return nil, fmt.Errorf("error authenticating via password grant: %v", err)
-		}
-		authTokenType = token.TokenType
-		authTokenValue = token.AccessToken
-	} else if targetName != "" {
-		cfg := FlyRc{}
-		err := cfg.ImportConfig()
-		if err != nil {
-			return nil, fmt.Errorf("unable to parse Fly configuration file (%s): %v", cfg.Filename, err)
+		httpClient := &http.Client{
+			Transport: transport,
 		}
 
-		if len(cfg.Targets) <= 0 {
-			return nil, fmt.Errorf("no targets found in Fly configuration file (%s)", cfg.Filename)
-		}
-		if targetName == "" {
-			return nil, fmt.Errorf("provider argument \"target\" must be specified")
-		}
-		target, exists := cfg.Targets[targetName]
-		if !exists {
-			return nil, fmt.Errorf("unable to find targetName with ID \"%s\" in Fly configuration file %s", targetName, cfg.Filename)
-		}
-		concourseURL = target.API
-		if u, err = url.Parse(concourseURL); err != nil {
-			return nil, fmt.Errorf("unable to parse URL (%s): %v", concourseURL, err)
-		}
-		insecure = target.Insecure
-		authTokenType = target.Token.Type
-		authTokenValue = target.Token.Value
-	} else {
-		cfgMissing := make([]string, 0)
-		if concourseURL == "" {
-			cfgMissing = append(cfgMissing, "\"concourse_url\"")
-		}
-		if authTokenType == "" {
-			cfgMissing = append(cfgMissing, "\"auth_token_type\"")
-		}
-		if authTokenValue == "" {
-			cfgMissing = append(cfgMissing, "\"auth_token_value\"")
-		}
-		if len(cfgMissing) > 0 {
-			return nil, fmt.Errorf("required configuration parameter(s) missing: %s", strings.Join(cfgMissing, ", "))
-		}
-		curl, err := url.Parse(concourseURL)
-		if err != nil {
-			return nil, fmt.Errorf("unable to parse URL (%s): %v", concourseURL, err)
-		}
-		u = &url.URL{
-			Scheme: curl.Scheme,
-			Host:   curl.Host,
-			Path:   curl.Path,
-		}
+		return NewConfig(u, httpClient, insecure, targetName)
 	}
-	oAuthToken := &oauth2.Token{
-		TokenType:   authTokenType,
-		AccessToken: authTokenValue,
-	}
-	transport := &oauth2.Transport{
-		Source: oauth2.StaticTokenSource(oAuthToken),
-	}
-	httpClient := &http.Client{
-		Transport: transport,
-	}
-
-	return NewConfig(u, httpClient, insecure, targetName)
 }
 
 // UserPassLogin manages state for a password grant session
