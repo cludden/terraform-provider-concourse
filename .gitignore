@@ -16,3 +16,6 @@
 # IntelliJ IDEA configuration
 /.idea/
 *.iml
+
+dist
+examples/terraform-provider-*
