@@ -11,6 +11,13 @@ import (
 	"golang.org/x/oauth2"
 )
 
+// var logger *log.Logger
+
+// func init() {
+// 	f, _ := os.OpenFile("terraform-provider-concourse.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+// 	logger = log.New(f, "terraform-provider-concourse", log.LstdFlags)
+// }
+
 // SkyUserInfo encapsulates all the information that is being reported by the Sky marshal
 // "sky/userinfo" REST endpoint
 type SkyUserInfo struct {

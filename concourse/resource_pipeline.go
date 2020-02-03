@@ -8,7 +8,7 @@ import (
 
 	"github.com/concourse/concourse/atc"
 	"github.com/hashicorp/terraform/helper/schema"
-	yaml "gopkg.in/yaml.v2"
+	"sigs.k8s.io/yaml"
 )
 
 // pipelineIDAsString converts a given numeric team ID, which is required, because Terraform resource data IDs must be
@@ -86,7 +86,6 @@ func resourcePipelineCreate(d *schema.ResourceData, m interface{}) error {
 }
 
 func resourcePipelineRead(d *schema.ResourceData, m interface{}) error {
-
 	id := d.Id()
 	team := d.Get("team").(string)
 	name := d.Get("name").(string)
@@ -115,7 +114,7 @@ func resourcePipelineRead(d *schema.ResourceData, m interface{}) error {
 
 			var lastConfig atc.Config
 			if err := atc.UnmarshalConfig([]byte(lastConfigStr), &lastConfig); err != nil {
-				return fmt.Errorf("error parsing last known config: %v", err)
+				return fmt.Errorf("error parsing last known config: %v\n\n%s", err, lastConfigStr)
 			}
 
 			currentConfig, version, _, err := concourse.PipelineConfig(pipeline.Name)
@@ -263,15 +262,38 @@ func resourcePipelineExists(d *schema.ResourceData, m interface{}) (bool, error)
 }
 
 func resourcePipelineState(d *schema.ResourceData, m interface{}) ([]*schema.ResourceData, error) {
-	nameOrID := d.Id()
-	if err := resourcePipelineRead(d, m); err != nil {
-		return nil, err
+	teamSlashName := d.Id()
+	name := strings.Split(teamSlashName, "/")
+	if len(name) != 2 {
+		return nil, fmt.Errorf("id must be in the form <team>/<pipeline-name-or-id>")
 	}
-	if d.Id() == "" {
-		return nil, fmt.Errorf("pipeline with ID or name %s not found", nameOrID)
-	}
-	return []*schema.ResourceData{d}, nil
 
+	config, versionStr, found, err := m.(Config).Concourse().Team(name[0]).PipelineConfig(name[1])
+	if err != nil {
+		return nil, fmt.Errorf("error retrieving pipeline %s: %v", teamSlashName, err)
+	}
+	if !found {
+		return nil, fmt.Errorf("no pipeline found for %s", teamSlashName)
+	}
+
+	d.SetId(name[1])
+	d.Set("team", name[0])
+	d.Set("name", name[1])
+
+	version, err := strconv.Atoi(versionStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid config version: %v", err)
+	}
+	d.Set("config_version", version)
+
+	configBytes, err := yaml.Marshal(&config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal config: %v", err)
+	}
+	configStr := string(configBytes)
+	d.Set("config", configStr)
+
+	return []*schema.ResourceData{d}, nil
 }
 
 func resourcePipeline() *schema.Resource {
